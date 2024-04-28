@@ -1,0 +1,164 @@
+using System;
+using System.Collections.Generic;
+using RosMessageTypes.Sensor;
+using RosMessageTypes.Std;
+using RosMessageTypes.BuiltinInterfaces;
+using Unity.Robotics.Core;
+using UnityEngine;
+using Unity.Robotics.ROSTCPConnector;
+using UnityEngine.Serialization;
+
+public class LaserSensor3D
+{
+    float RangeMetersMin;
+    float RangeMetersMax;
+
+    float fov_horizontal;
+    float fov_vertical;
+
+    float angularResolution_vertical;
+    float angularResolution_horizontal;
+    
+    string FrameId;
+
+    float ScanAngleStart_h;
+    float ScanAngleEnd_h;
+    float ScanAngleStart_v;
+    float ScanAngleEnd_v;
+    
+    int NumMeasurementsTaken_h;
+
+    uint numPoints;
+    int raw_data_indx;
+    int NumMeasurementsPerScan_h;
+    int NumMeasurementsPerScan_v;
+    uint raw_data_len;
+    byte[] raw_data;
+
+    GameObject laser_sensor_link;
+
+
+    public LaserSensor3D(GameObject _laser_sensor_link, float _RangeMetersMin, float _RangeMetersMax, float _fov_horizontal, float _fov_vertical, float _angularResolution_vertical, float _angularResolution_horizontal)
+    {
+
+        RangeMetersMin = _RangeMetersMin;
+        RangeMetersMax = _RangeMetersMax;
+        fov_horizontal = _fov_horizontal;
+        fov_vertical = _fov_vertical;
+        angularResolution_vertical = _angularResolution_vertical;
+        angularResolution_horizontal = _angularResolution_horizontal;
+
+        laser_sensor_link = _laser_sensor_link;
+
+        FrameId = laser_sensor_link.name;
+        Debug.Log(FrameId);
+
+        ScanAngleStart_h = -fov_horizontal/2;
+        ScanAngleEnd_h = fov_horizontal/2;
+        ScanAngleStart_v = -fov_vertical/2;
+        ScanAngleEnd_v = fov_vertical/2;
+
+        NumMeasurementsPerScan_h = Mathf.FloorToInt(fov_horizontal/angularResolution_horizontal);
+        NumMeasurementsPerScan_v = Mathf.FloorToInt(fov_vertical/angularResolution_vertical);
+
+        numPoints = (uint)(NumMeasurementsPerScan_h*NumMeasurementsPerScan_v);
+
+        raw_data_len = 16*numPoints;
+        raw_data = new byte[raw_data_len];
+        raw_data_indx = 0;
+
+        NumMeasurementsTaken_h = 0;
+    }
+
+    public PointCloud2Msg getScanMsg()
+    {
+        Transform sensor_transform = laser_sensor_link.transform;
+
+        raw_data_indx = 0;
+        NumMeasurementsTaken_h = 0;
+
+        // var yawBaseDegrees = sensor_transform.rotation.eulerAngles.y; // yaw of object this script is attached to i.e. laser_scanner
+        // var pitchBaseDegrees = sensor_transform.rotation.eulerAngles.x; // pitch of object this script is attached to i.e. laser_scanner
+        // var rollBaseDegrees = sensor_transform.rotation.eulerAngles.z; // roll of object this script is attached to i.e. laser_scanner
+
+        while (NumMeasurementsTaken_h < NumMeasurementsPerScan_h)
+        {
+            var scan_angle_h = Mathf.Lerp(ScanAngleStart_h, ScanAngleEnd_h, NumMeasurementsTaken_h / (float)NumMeasurementsPerScan_h); // Azimuthal Angle
+
+            int NumMeasurementsTaken_v = 0;
+
+            while (NumMeasurementsTaken_v<NumMeasurementsPerScan_v)
+            {
+
+                var scan_angle_v = Mathf.Lerp(ScanAngleStart_v, ScanAngleEnd_v, NumMeasurementsTaken_v / (float)NumMeasurementsPerScan_v);
+
+                var local_dir_vec = new Vector3(Mathf.Cos(scan_angle_v)*Mathf.Cos(scan_angle_h), Mathf.Sin(scan_angle_v), Mathf.Cos(scan_angle_v)*Mathf.Sin(scan_angle_h));
+
+                // var directionVector = Quaternion.Euler(pitchDegrees, yawDegrees, 0f) * Vector3.forward;
+
+                var directionVector = sensor_transform.rotation * local_dir_vec;
+
+
+                var measurementStart = RangeMetersMin * directionVector + sensor_transform.position;
+
+                var measurementRay = new Ray(measurementStart, directionVector);
+                var foundValidMeasurement = Physics.Raycast(measurementRay, out var hit, RangeMetersMax);
+                // Only record measurement if it's within the sensor's operating range
+                if (foundValidMeasurement)
+                {
+                    BitConverter.GetBytes(hit.point.z-sensor_transform.position.z).CopyTo(raw_data, raw_data_indx * 16);
+                    BitConverter.GetBytes(-(hit.point.x-sensor_transform.position.x)).CopyTo(raw_data, raw_data_indx * 16+4);
+                    BitConverter.GetBytes(hit.point.y-sensor_transform.position.y).CopyTo(raw_data, raw_data_indx * 16+8);
+                    BitConverter.GetBytes(0.0f).CopyTo(raw_data, raw_data_indx * 16 + 12);
+                }
+                else
+                {
+                    BitConverter.GetBytes(float.MaxValue).CopyTo(raw_data, raw_data_indx * 16);
+                    BitConverter.GetBytes(float.MaxValue).CopyTo(raw_data, raw_data_indx * 16+4);
+                    BitConverter.GetBytes(float.MaxValue).CopyTo(raw_data, raw_data_indx * 16+8);
+                    BitConverter.GetBytes(0.0f).CopyTo(raw_data, raw_data_indx * 16 + 12);
+
+                }
+                // Even if Raycast didn't find a valid hit, we still count it as a measurement
+                ++NumMeasurementsTaken_v;
+                ++raw_data_indx;
+            }
+            ++NumMeasurementsTaken_h;
+        }
+        
+
+        var timestamp = new TimeStamp(Clock.time);
+        
+        var msg = new PointCloud2Msg
+        {
+            header = new HeaderMsg
+            {
+                frame_id = FrameId,
+                stamp = new TimeMsg
+                {
+                    sec = timestamp.Seconds,
+                    nanosec = timestamp.NanoSeconds,
+                }
+            },
+            height = 1,
+            width = numPoints,
+            fields = new PointFieldMsg[]
+            {
+                new PointFieldMsg("x", 0, PointFieldMsg.FLOAT32, 1),
+                new PointFieldMsg("y", 4, PointFieldMsg.FLOAT32, 1),
+                new PointFieldMsg("z", 8, PointFieldMsg.FLOAT32, 1),
+                new PointFieldMsg("i", 12, PointFieldMsg.FLOAT32, 1)
+            },
+            is_bigendian = false,
+            point_step = 16,
+            row_step = raw_data_len,
+            data = raw_data,
+            is_dense = false,
+        };
+
+        NumMeasurementsTaken_h = 0;
+        raw_data_indx = 0;
+
+        return msg;
+    }
+}
