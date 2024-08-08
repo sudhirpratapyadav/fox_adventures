@@ -1,7 +1,7 @@
 # FOX Adventures
 
 #### Details of Project
-1. **Name:** **Fox Sphere: Discovering Nature's Balance**
+1. **Name:** **Fox Adventures: Discovering Nature's Balance**
 2. **Brief:** In this project, I would design and implement a virtual simulation of a natural ecosystem highlighting the interactions between various animals and their environment. The objective of this project is to create a realistic and dynamic simulation that demonstrates the behaviours of different organisms in response to environmental changes and interactions with each other. Also demonstrate planning and other capabilities to navigate the environment.
 3. **Project Description:** 
 	1. Virtual model of a natural ecosystem will be developed. It would include few plants, places (grassland, lake, etc.).
